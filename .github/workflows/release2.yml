@@ -1,0 +1,166 @@
+name: Publish release binaries (test)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Testing the release workflow'
+        required: true
+        default: 'true'
+
+jobs:
+  build:
+    name: Publish for ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        name:
+          - linux
+          - macos-arm64
+          - macos-x86_64
+          - windows
+        include:
+          - name: linux
+            os: ubuntu-20.04
+            build_deps: >
+              libpcsclite-dev
+            archive_name: age-plugin-yubikey.tar.gz
+            asset_suffix: x86_64-linux.tar.gz
+
+          - name: windows
+            os: windows-latest
+            archive_name: age-plugin-yubikey.zip
+            asset_suffix: x86_64-windows.zip
+
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            build_flags: --target aarch64-apple-darwin
+            archive_name: age-plugin-yubikey.tar.gz
+            asset_suffix: arm64-darwin.tar.gz
+
+          - name: macos-x86_64
+            os: macos-latest
+            archive_name: age-plugin-yubikey.tar.gz
+            asset_suffix: x86_64-darwin.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+      - run: rustup override set ${{steps.toolchain.outputs.name}}
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+        if: matrix.target != ''
+
+      - name: Install linux build dependencies
+        run: sudo apt install ${{ matrix.build_deps }}
+        if: matrix.build_deps != ''
+
+      - name: Set up .cargo/config
+        run: |
+          mkdir .cargo
+          echo '${{ matrix.cargo_config }}' >.cargo/config
+        if: matrix.cargo_config != ''
+
+      - name: cargo build
+        run: cargo build --release --locked ${{ matrix.build_flags }}
+
+      - name: Create archive
+        run: |
+          mkdir -p release/age-plugin-yubikey
+          mv target/${{ matrix.target }}/release/age-plugin-yubikey release/age-plugin-yubikey/
+          tar czf ${{ matrix.archive_name }} -C release/ age-plugin-yubikey/
+        if: matrix.name != 'windows'
+
+      - name: Create archive [Windows]
+        run: |
+          mkdir -p release/age-plugin-yubikey
+          mv target/release/age-plugin-yubikey.exe release/age-plugin-yubikey/
+          cd release/
+          7z.exe a ../${{ matrix.archive_name }} age-plugin-yubikey/
+        shell: bash
+        if: matrix.name == 'windows'
+
+      - name: Upload archive to release
+        uses: svenstaro/upload-release-action@2.9.0
+        with:
+          file: ${{ matrix.archive_name }}
+          asset_name: age-plugin-yubikey-$tag-${{ matrix.asset_suffix }}
+          prerelease: true
+        if: github.event.inputs.test != 'true'
+
+  deb:
+    name: Debian ${{ matrix.name }}
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        name: [linux, linux-arm64]
+        include:
+          - name: linux
+            target: x86_64-unknown-linux-gnu
+            build_deps: >
+              libpcsclite-dev
+
+          - name: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            build_deps: >
+              gcc-aarch64-linux-gnu libpcsclite-dev:arm64
+            cargo_config: |
+              [target.aarch64-unknown-linux-gnu]
+              linker = "aarch64-linux-gnu-gcc"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+      - run: rustup override set ${{steps.toolchain.outputs.name}}
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: cargo install cargo-deb
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-deb
+
+      - name: Prepare for arm64 cross-compilation
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+
+      - name: Install build dependencies
+        run: sudo apt install ${{ matrix.build_deps }}
+        if: matrix.build_deps != ''
+
+      - name: Set up .cargo/config
+        run: |
+          mkdir .cargo
+          echo '${{ matrix.cargo_config }}' >.cargo/config
+        if: matrix.cargo_config != ''
+
+      - name: cargo build
+        run: cargo build --release --locked --target ${{ matrix.target }} ${{ matrix.build_flags }}
+
+      - name: Generate manpages
+        uses: actions-rs/cargo@v1
+        with:
+          command: run
+          args: --example generate-docs
+
+      - name: cargo deb
+        uses: actions-rs/cargo@v1
+        with:
+          command: deb
+          args: --package age-plugin-yubikey --no-build --target ${{ matrix.target }}
+
+      - name: Upload Debian package to release
+        uses: svenstaro/upload-release-action@2.9.0
+        with:
+          file: target/${{ matrix.target }}/debian/*.deb
+          file_glob: true
+          prerelease: true
+        if: github.event.inputs.test != 'true'
