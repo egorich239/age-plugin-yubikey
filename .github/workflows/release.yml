@@ -24,7 +24,7 @@ jobs:
           - windows
         include:
           - name: linux
-            os: ubuntu-20.04
+            os: ubuntu-22.04
             build_deps: >
               libpcsclite-dev
             archive_name: age-plugin-yubikey.tar.gz
@@ -95,23 +95,22 @@ jobs:
 
   deb:
     name: Debian ${{ matrix.name }}
-    runs-on: ubuntu-20.04
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         name: [linux, linux-arm64]
         include:
           - name: linux
+            os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             build_deps: >
               libpcsclite-dev
 
           - name: linux-arm64
+            os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             build_deps: >
-              gcc-aarch64-linux-gnu libpcsclite-dev:arm64
-            cargo_config: |
-              [target.aarch64-unknown-linux-gnu]
-              linker = "aarch64-linux-gnu-gcc"
+              libpcsclite-dev
 
     steps:
       - uses: actions/checkout@v4
@@ -125,12 +124,6 @@ jobs:
         with:
           command: install
           args: cargo-deb
-
-      - name: Prepare for arm64 cross-compilation
-        run: |
-          sudo dpkg --add-architecture arm64
-          sudo apt-get update
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
 
       - name: Install build dependencies
         run: sudo apt install ${{ matrix.build_deps }}
