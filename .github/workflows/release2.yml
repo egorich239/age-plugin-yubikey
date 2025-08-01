@@ -153,6 +153,6 @@ jobs:
       - name: Upload Debian package to release
         uses: svenstaro/upload-release-action@2.9.0
         with:
-          file: target/${{ matrix.target }}/debian/test.deb
+          file: target/${{ matrix.target }}/debian/*.deb
           file_glob: true
           prerelease: true
